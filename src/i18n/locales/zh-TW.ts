@@ -6,6 +6,14 @@ export default {
     retrySource: '重試設定源',
     dismissNotification: '關閉通知',
   },
+  login: {
+    title: '介面文件登入',
+    subtitle: '請輸入帳號和密碼以存取 API 除錯頁面',
+    username: '帳號',
+    password: '密碼',
+    submit: '登 入',
+    error: '帳號或密碼錯誤，請重試',
+  },
   workspace: {
     toggleCollections: '切換集合面板',
     logo: 'OpenAPI UI 標誌',

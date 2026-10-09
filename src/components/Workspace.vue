@@ -658,9 +658,28 @@ function closeTabs(ids: string[], action: { type: string; id: string }) {
   files.value = nextFiles
 }
 
-/** 深拷贝 draft：先 toRaw 剥掉 Vue 响应式 Proxy，否则 structuredClone 会抛 DataCloneError */
+/**
+ * 递归剥掉 draft 里所有层级的 Vue 响应式 Proxy，再 structuredClone 成不可变快照。
+ *
+ * 根因：reducer 的 `open` / `draft` 分支用 `{ ...tab.draft, ...patch }` 展开**响应式** draft 时，
+ * Vue 的 get 陷阱会把每个对象值（form / parameters / headers / outputs 这些数组）重新包成新的
+ * 响应式 Proxy。于是 active.value.draft 的嵌套层全是 Proxy，而 `toRaw(draft)` 只剥最外层，
+ * structuredClone 一碰到嵌套 Proxy 就抛 DataCloneError（保存接口请求即报错）。
+ *
+ * 所以这里必须逐层 toRaw，而非只剥顶层。
+ */
+function rawValue(value: any): any {
+  if (value === null || typeof value !== 'object') return value
+  const base = toRaw(value)
+  if (Array.isArray(base)) return base.map(rawValue)
+  if (base instanceof Date) return new Date(base.getTime())
+  const out: Record<string, any> = {}
+  for (const key of Object.keys(base)) out[key] = rawValue(base[key])
+  return out
+}
+
 function cloneDraft(draft: Draft): Draft {
-  return structuredClone(toRaw(draft))
+  return structuredClone(rawValue(draft))
 }
 
 function addRequestToCollection(collectionId: string, operation: Operation, draft: Draft): string | null {
@@ -829,6 +848,9 @@ function onServerChange(value: string) {
 
 function onDraftChange(patch: Draft) {
   if (operation.value) dispatch({ type: 'draft', id: operation.value.id, patch })
+  // 集合请求：每次编辑（参数/请求头/请求体/form/outputs）即时回写集合，
+  // 否则不点「保存到集合」就切换/刷新/运行，改动会丢（"集合中配置没保存"）。
+  if (savedRequest.value && active.value) writeDraftToCollection(active.value.draft)
 }
 
 function onFile(name: string, file: File | undefined) {
@@ -855,6 +877,7 @@ function onCredentialsChange(next: Credentials) {
 
 function onAuthEnabled(authEnabled: boolean) {
   if (operation.value) dispatch({ type: 'draft', id: operation.value.id, patch: { authEnabled } })
+  if (savedRequest.value && active.value) writeDraftToCollection(active.value.draft)
 }
 
 function onHistoryOpen(id: string) {
@@ -885,25 +908,33 @@ function handleRunnerFromOverview() {
   view.value = 'runner'
 }
 
-function saveToCollection() {
-  if (!savedRequest.value || !active.value) return
+/**
+ * 把给定 draft 回写到「正在编辑的集合请求」并立即持久化（第 1064 行的 deep watch 会接管存储）。
+ * 返回是否真的发生了回写；没有 savedRequest（即当前请求不属于任何集合）时返回 false。
+ */
+function writeDraftToCollection(draft: Draft): boolean {
+  if (!savedRequest.value || !active.value) return false
+  const { collectionId, requestId } = savedRequest.value
   dispatch({
     type: 'update',
     patch: {
       collections: state.value.collections.map((collection: any) =>
-        collection.id === savedRequest.value!.collectionId
+        collection.id === collectionId
           ? {
               ...collection,
               requests: collection.requests.map((request: any) =>
-                request.id === savedRequest.value!.requestId
-                  ? { ...request, draft: cloneDraft(active.value.draft) }
-                  : request
+                request.id === requestId ? { ...request, draft: cloneDraft(draft) } : request
               ),
             }
           : collection
       ),
     },
   })
+  return true
+}
+
+function saveToCollection() {
+  if (!writeDraftToCollection(active.value.draft)) return
   props.notify(t('notify.collectionUpdated'))
 }
 

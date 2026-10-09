@@ -6,6 +6,14 @@ export default {
     retrySource: 'Retry configured source',
     dismissNotification: 'Dismiss notification',
   },
+  login: {
+    title: 'API Docs Login',
+    subtitle: 'Enter your account and password to access the API debugger',
+    username: 'Account',
+    password: 'Password',
+    submit: 'Sign in',
+    error: 'Invalid account or password, please try again',
+  },
   workspace: {
     toggleCollections: 'Toggle collections',
     logo: 'OpenAPI UI logo',

@@ -2,7 +2,7 @@
 
 基于 **Vue 3 + Vite + TypeScript** 的 OpenAPI 接口调试工作台：导入 OpenAPI 3.x / Swagger 2.0 规范后，
 即可像 Postman 一样浏览接口、编辑请求、管理集合与变量、批量运行，并一键生成多语言请求代码与
-客户端 SDK。所有工作区数据本地持久化，无需登录、无后端依赖。
+客户端 SDK。独立部署时所有工作区数据本地持久化，无需登录、无后端依赖；也可配合后端启用**可选登录鉴权**（见 [登录页与访问控制](#登录页与访问控制)）。
 
 它有两种用法，本仓库对两者都一等支持：
 
@@ -31,6 +31,7 @@
 - [环境变量配置](#环境变量配置)
 - [运行模式](#运行模式)
 - [脚本命令](#脚本命令)
+- [登录页与访问控制](#登录页与访问控制)
 - [集成到 ASP.NET Core](#集成到-aspnet-core)
 - [构建产物说明](#构建产物说明)
 - [项目结构](#项目结构)
@@ -95,8 +96,11 @@
 ### 其他
 
 - **接口概览（Overview）**：Markdown 文档渲染（`marked` + `DOMPurify` 消毒，防 XSS）。
-- **多语言**：English / 简体中文 / 繁體中文（vue-i18n，自动跟随并支持手动切换）。
-- **主题**：跟随系统 / 浅色 / Dark+ 等多套配色。
+- **多语言（i18n）**：内置 **English / 简体中文 / 繁體中文** 三套文案。
+    - **默认语言按浏览器协商**：未手动设置时读取 `navigator.languages` 选择默认语言（中文浏览器→中文、英文浏览器→英文）；浏览器语言不在三套内（如 `fr`/`de`/`ja`）一律回退 **English**。
+    - **手动选择优先且持久化**：在主页或登录页底部切换语言会写入 `localStorage['openapi-ui:locale']` 并立即生效；之后刷新或重访都以该选择为准，不再跟随浏览器。
+    - 登录页与主页共用同一 i18n 实例与存储键，两边语言**双向同步**。
+- **主题**：内置多套预设主题——默认 `graphite` 暗色，另含 `github-dark` / `visual-studio-dark` / `dark-plus` / `dark-modern` / `contrast` 等暗色，以及 `github-light` / `visual-studio-light` 浅色，并提供 `system` 跟随系统配色。登录页与主页面共享主题变量，风格自动一致。
 - **工作区持久化**：Tabs、历史、收藏、变量、集合按规范标识（URL 或 `info.title + version`）
   存入 `localStorage`，带版本号校验与结构合法性检查，损坏数据自动回退。
   鉴权凭据不在其中，单独由「记住凭据」开关控制（见上文）。
@@ -259,6 +263,40 @@ VITE_SPEC_NAME=
 
 ---
 
+## 登录页与访问控制
+
+登录是**可选功能**：是否要求登录、由谁校验、登录后跳去哪，全部由后端决定。前端只提供登录页 UI，并约定好表单字段与回跳参数。
+
+### 它是怎么工作的（前端侧）
+
+- **没有引入路由**。SPA 内部按访问路径分流：当 `location.pathname`（去掉结尾斜杠）以 `/login` 结尾时渲染登录视图；其余路径（含 `/`）一律渲染接口工作台首页。
+    - 开发：`http://127.0.0.1:5173/login`
+    - 嵌进 .NET（挂在 `/docs` 下）：`http://<host>/docs/login`
+- 登录页**复用主页的主题与多语言**：样式全部吃 `main.css` 的主题变量，底部语言下拉与主页面共用同一 `i18n` 实例与 `localStorage['openapi-ui:locale']`，两边语言双向同步。
+- 表单行为（与后端对接的约定）：
+    - `method="post" action=""`：直接 POST 回**当前路径**（如 `/login`、`/docs/login`），不写死端点。
+    - 隐藏字段 `return`：携带登录来源（未登录跳来时由后端塞入的原目标路径），登录成功后回跳。
+    - 读取 URL 的 `?error`：后端校验失败时带 `?error=1` 重定向回登录页，前端据此显示错误提示。
+    - 读取 URL 的 `?return`：未登录访问受保护资源时，后端重定向到登录页并带上 `?return=<原路径>`。
+
+### 后端需要做什么
+
+前端只负责页面渲染，账号体系、校验、Cookie 由宿主实现（例如 .NET 侧的 `DocUiMiddleware`）。要让登录页真正可用，宿主需满足三条约定：
+
+1. **登录路径返回 SPA 的 `index.html`**：访问 `/login`（或 `/docs/login`）时，宿主要把 SPA 入口（`dist/index.html`）作为响应返回，而不是 404。这样前端才能接管渲染登录视图。（开发模式下 Vite 自带 history fallback，直接访问 `/login` 即可。）
+2. **该路径接收 POST 并校验**：提供一个消费表单字段 `username` / `password` / `return` 的端点——
+    - 校验通过 → 下发认证 Cookie，302 跳转到 `return`（无则返回首页）；
+    - 校验失败 → 302 跳回登录页并带 `?error=1`。
+3. **受保护资源未认证时跳登录页**：未登录访问受保护资源时重定向到登录页并带 `?return=<原路径>`。
+
+> 前端表单字段名（`username`/`password`/`return`）与 `?error`/`?return` 约定已与常见的 `DocUiMiddleware`（其 `HandleLoginPost` / `IsLoginArea`）对齐，后端无需额外适配即可对接。
+
+### 关闭登录
+
+不配置账号密码（宿主不启用鉴权）时，前端 `isLoginRoute` 分流照常工作，但**不会有人把你重定向到登录页**，`/` 直接打开接口工作台首页——即"登录为可选项"。
+
+---
+
 ## 集成到 ASP.NET Core
 
 页面可以被 .NET 类库整目录嵌进 dll，主程序两行代码挂出 `/docs`。这条链路上有三处约定，
@@ -378,6 +416,7 @@ openapi-ui-vue/
 │   │   ├── RequestTabContextMenu.vue  # 标签页右键菜单
 │   │   ├── Runner.vue           # 集合运行器
 │   │   ├── Workspace.vue        # 工作区主布局（标签页 / 导航 / 主题 / 语言）
+│   │   ├── LoginView.vue        # 登录页（/login 路径分流；可选登录，由后端鉴权）
 │   │   ├── tools/               # 工具面板（集合 / 历史 / 概览 / 变量）
 │   │   └── ui/                  # 通用 UI 组件（Monaco 封装、键值编辑器、Modal 等）
 │   ├── composables/             # 组合式函数（useWorkspace）
@@ -432,6 +471,14 @@ npm run test:watch    # 监听模式
 
 **`.env.dotnet` 里的地址没生效**
 `--mode dotnet` 才会加载它。直接跑 `vite build` 用的是 `.env` + `.env.production`。
+
+**登录页打不开 / 一片空白（嵌进 .NET 时）**
+登录页依赖后端把 `/login`（或 `/docs/login`）指向 SPA 的 `index.html`。若宿主未做这条约定，访问该路径会 404。
+开发模式下直接 `npm run dev` 然后访问 `http://127.0.0.1:5173/login` 即可（Vite 自带 history fallback）。
+确认后端已按 [登录页与访问控制](#登录页与访问控制) 的约定把登录路径吐出 SPA。
+
+**登录后没有跳回原页面**
+检查后端在登录成功 302 时是否带上了 `return` 字段（来自登录页隐藏字段）。没有 `return` 时回跳首页是符合预期的行为；若想回到登录前所在页，后端重定向到登录页时必须带 `?return=<原路径>`。
 
 ---
 

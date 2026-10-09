@@ -1,6 +1,10 @@
 <template>
   <div>
-    <template v-if="loaded">
+    <!-- 登录为可选项：仅当访问路径以 /login 结尾时渲染登录页，其余（含 /）仍走当前首页 -->
+    <LoginView v-if="isLoginRoute" />
+
+    <template v-else>
+      <template v-if="loaded">
       <Workspace
         :key="`${workspaceKey(loaded.source, loaded.spec)}:${loaded.revision || 0}`"
         :spec="loaded.spec"
@@ -47,6 +51,7 @@
         <X :size="16" />
       </IconButton>
     </div>
+    </template>
   </div>
 </template>
 
@@ -56,6 +61,7 @@ import { useI18n } from 'vue-i18n'
 import { PanelsTopLeft, Upload, X } from 'lucide-vue-next'
 import Workspace from './components/Workspace.vue'
 import ImportSpec from './components/ImportSpec.vue'
+import LoginView from './components/LoginView.vue'
 import IconButton from './components/ui/IconButton.vue'
 import { parseSpec } from './lib/api'
 import { workspaceKey } from './lib/workspace'
@@ -100,6 +106,11 @@ document.body.dataset.theme = theme.value
 const toast = ref<Toast | null>(null)
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 
+// 登录页路由：路径以 /login 结尾（如 /login、/docs/login）即渲染登录页，其余走当前首页
+const isLoginRoute = ref(
+  location.pathname.replace(/\/+$/, '').toLowerCase().endsWith('/login')
+)
+
 const importKey = `openapi-ui:last-import:${location.pathname}`
 
 function notify(message: string, failure = false) {
@@ -135,7 +146,18 @@ watch(theme, (newTheme) => {
   } catch {}
 })
 
+// 加载到 JSON 后（无论是 fetch 请求还是手动/缓存导入），把 spec 的大标题
+// info.title 拼接到浏览器页面标题（标签页标题）上。title 为空时回落为 base。
+function applyPageTitle(spec?: OpenApiDocument) {
+  const base = 'OpenAPI UI'
+  const title = spec?.info?.title
+  document.title = title ? `${base} · ${title}` : base
+}
+
+watch(() => loaded.value?.spec, applyPageTitle, { immediate: true })
+
 onMounted(async () => {
+  if (isLoginRoute.value) return
   if (props.initialSpec) return
 
   const abort = new AbortController()

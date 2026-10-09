@@ -6,6 +6,14 @@ export default {
     retrySource: '重试配置源',
     dismissNotification: '关闭通知',
   },
+  login: {
+    title: '接口文档登录',
+    subtitle: '请输入账号和密码以访问 API 调试页面',
+    username: '账号',
+    password: '密码',
+    submit: '登 录',
+    error: '账号或密码错误，请重试',
+  },
   workspace: {
     toggleCollections: '切换集合面板',
     logo: 'OpenAPI UI 标志',
