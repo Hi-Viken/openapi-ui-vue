@@ -1,5 +1,6 @@
 import { load } from 'js-yaml'
 import { JSONPath } from 'jsonpath-plus'
+import type { AuthStatus } from '@/types'
 
 export const METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'trace']
 
@@ -47,6 +48,43 @@ export function parseSpec(text: string): any {
     throw new Error('A valid OpenAPI 3.x or Swagger 2.0 document with paths is required.')
   }
   return spec
+}
+
+/** OpenAPI Tag Object 的可选元数据（description / externalDocs）。 */
+export interface TagMeta {
+  description?: string
+  externalDocs?: { description?: string; url: string }
+}
+
+/**
+ * 从 spec.tags 构建 name → { description, externalDocs } 映射。
+ * 这两个字段都是 OpenAPI Tag Object 的可选字段，规范不要求必有：
+ * - 有 description → 在分组标题下呈现说明
+ * - 有 externalDocs.url → 呈现「文档」外链
+ * - 都没有 → 该 tag 在映射里仍有一条空记录，调用方按「无元数据」忽略即可
+ */
+export function tagMetaMap(spec: any): Map<string, TagMeta> {
+  const map = new Map<string, TagMeta>()
+  const tags = Array.isArray(spec?.tags) ? spec.tags : []
+  for (const tag of tags) {
+    if (!tag || typeof tag.name !== 'string') continue
+    const externalDocs =
+      tag.externalDocs && typeof tag.externalDocs.url === 'string'
+        ? {
+            description:
+              typeof tag.externalDocs.description === 'string' && tag.externalDocs.description.trim()
+                ? tag.externalDocs.description
+                : undefined,
+            url: tag.externalDocs.url,
+          }
+        : undefined
+    map.set(tag.name, {
+      description:
+        typeof tag.description === 'string' && tag.description.trim() ? tag.description : undefined,
+      externalDocs,
+    })
+  }
+  return map
 }
 
 export function getOperations(spec: any): any[] {
@@ -182,13 +220,40 @@ export function makeDraft(operation: any, spec: any): any {
   }
 }
 
+/**
+ * 变量 / 输出变量的「名字」经常被用户照抄成 `{{token}}` 或 `{{@token}}`（把引用语法当成了名字），
+ * 于是出现「变量面板里能看到且有值，但 `{{token}}` 却提示不存在、可用列表还显示成 `{{{{token}}}}`」的怪象。
+ * 这里把外层的 `{{ }}`、前导 `@` 和空白一律剥掉，让 `{{token}}` / `@token` / `token` 都归一为 `token`。
+ */
+export function normalizeVarName(name: any): string {
+  let n = String(name ?? '').trim()
+  n = n.replace(/^\{\{\s*/, '').replace(/\s*\}\}$/, '')
+  n = n.replace(/^@/, '').trim()
+  return n
+}
+
+/**
+ * 变量查找：名字归一化后精确匹配（同时兼容"首尾带空格 / 带 `{{ }}` / 带 `@` 前缀"的写法）。
+ * 粘贴变量名时带上看不见的首尾空格、或把 `{{token}}` 当名字填，太常见了 —— 肉眼看完全一致却匹配不上。
+ *
+ * 判定（variableReferences）和替换（replaceVariables）**必须共用这一份**，
+ * 否则会出现「界面判定变量已解析、真正发请求时却原样发出 {{x}}」这种两端打架。
+ */
+function variableLookup(variables: any[]): (name: string) => any {
+  const usable = (variables || []).filter((variable: any) => variable.enabled !== false)
+  const byName = new Map<string, any>()
+  for (const variable of usable) {
+    const norm = normalizeVarName(variable.name)
+    if (norm && !byName.has(norm)) byName.set(norm, variable)
+  }
+  return (name: string) => byName.get(normalizeVarName(name))
+}
+
 export function replaceVariables(value: string | undefined | null, variables: any[]): string {
-  const values = new Map(
-    variables.filter((variable: any) => variable.enabled !== false).map((variable: any) => [variable.name, variable.value])
-  )
+  const lookup = variableLookup(variables)
   return String(value ?? '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match: string, name: string): string => {
-    if (values.has(name)) return String(values.get(name))
-    return name.startsWith('@') && values.has(name.slice(1)) ? String(values.get(name.slice(1))) : match
+    const hit = lookup(name) ?? (name.startsWith('@') ? lookup(name.slice(1)) : undefined)
+    return hit ? String(hit.value ?? '') : match
   })
 }
 
@@ -197,18 +262,19 @@ export function variableReferences(
   variables: any[] = [],
   outputs: any[] = []
 ): any[] {
-  const enabled = new Map(
-    variables.filter((variable) => variable.enabled !== false).map((variable) => [variable.name, variable])
-  )
+  const lookup = variableLookup(variables)
   return Array.from(String(value ?? '').matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g), (match) => {
     const name = match[1]
     const output = name.startsWith('@')
-    const variable = enabled.get(name) ?? (output ? enabled.get(name.slice(1)) : undefined)
+    const variable = lookup(name) ?? (output ? lookup(name.slice(1)) : undefined)
     const paths = output
       ? [
           ...new Set(
             outputs
-              .filter((item) => item.name?.replace(/^@/, '') === name.slice(1) && item.path)
+              .filter(
+                (item) =>
+                  normalizeVarName(item.name) === normalizeVarName(name.slice(1)) && item.path
+              )
               .map((item) => item.path)
           ),
         ]
@@ -247,6 +313,264 @@ export function credentialPresent(scheme: any, value: any): boolean {
   if (value.expiresAt && value.expiresAt <= Date.now()) return false
   if (scheme.type === 'basic' || scheme.scheme === 'basic') return !!value.username
   return !!value.token
+}
+
+/**
+ * 把凭据里的 `{{变量}}` 替换成变量值（token / username / password 都支持，
+ * 输出变量的 `@` 前缀写法同样有效）。
+ * 变量不存在时保留原样 —— 与请求参数的处理一致，不会静默发空值。
+ */
+export function resolveCredential(credential: any, variables: any[] = []): Record<string, any> {
+  if (!credential || !variables?.length) return credential || {}
+  const resolved: Record<string, any> = { ...credential }
+  for (const key of ['token', 'username', 'password'])
+    if (typeof resolved[key] === 'string') resolved[key] = replaceVariables(resolved[key], variables)
+  return resolved
+}
+
+/**
+ * 凭据值里引用了但**取不到值**的 `{{变量}}`。
+ * 令牌框是最容易踩的地方：填 `{{token}}` 而变量没定义时，界面原本照样显示"已配置"，
+ * 请求发出去的却是字面量 `Bearer {{token}}`，必然 401 且无任何提示。
+ * 复用 variableReferences —— 它是唯一权威的判定，能区分"已解析 / 待生成的输出变量 / 真的缺失"。
+ */
+export function credentialVariableIssues(
+  credential: any,
+  variables: any[] = [],
+  outputs: any[] = []
+): string[] {
+  if (!credential) return []
+  const issues: string[] = []
+  for (const key of ['token', 'username', 'password']) {
+    if (typeof credential[key] !== 'string') continue
+    // 只认 'missing'：'pending' 是"输出变量已声明但还没跑过来源请求"，属预期状态，不该报警
+    for (const reference of variableReferences(credential[key], variables, outputs))
+      if (reference.status === 'missing') issues.push(reference.name)
+  }
+  return [...new Set(issues)]
+}
+
+/**
+ * 把取不到值的引用按类型分流：带 `@` 的是"输出变量"（还没配提取规则），
+ * 其余是普通变量（「变量」面板里压根没这个名字）。
+ * 两者的下一步动作完全不同 —— 混在一起提示，用户只会照抄示例然后继续 401。
+ */
+export function splitUnresolved(names: string[] = []): {
+  outputs: string[]
+  variables: string[]
+} {
+  const outputs = names.filter((name) => name.startsWith('@'))
+  return { outputs, variables: names.filter((name) => !name.startsWith('@')) }
+}
+
+export type CredentialIssueKind = 'output' | 'disabled' | 'case' | 'notFound'
+
+export interface CredentialIssue {
+  /** 引用里写的原始名字（带 @ 前缀表示输出变量） */
+  name: string
+  kind: CredentialIssueKind
+  /** kind === 'case' 时给出变量面板里真实存在的那个名字 */
+  suggestion?: string
+}
+
+/**
+ * 光说"变量不存在"没用 —— 变量面板里明明看得到。真正的原因通常是这三种之一，
+ * 判出来才能给出可执行的下一步（而不是让用户对着界面怀疑人生）。
+ */
+export function credentialIssues(
+  credential: any,
+  variables: any[] = [],
+  outputs: any[] = []
+): CredentialIssue[] {
+  if (!credential) return []
+  const norm = (value: any) => String(value ?? '').trim()
+  const lower = (value: any) => norm(value).toLowerCase()
+  const usable = (variables || []).filter((variable) => variable.enabled !== false)
+  const disabled = (variables || []).filter((variable) => variable.enabled === false)
+  const issues: CredentialIssue[] = []
+  for (const key of ['token', 'username', 'password']) {
+    if (typeof credential[key] !== 'string') continue
+    for (const reference of variableReferences(credential[key], variables, outputs)) {
+      if (reference.status !== 'missing') continue
+      let issue: CredentialIssue
+      if (reference.output) issue = { name: reference.name, kind: 'output' }
+      else if (disabled.some((variable) => norm(variable.name) === norm(reference.name)))
+        issue = { name: reference.name, kind: 'disabled' }
+      else {
+        const caseHit = usable.find((variable) => lower(variable.name) === lower(reference.name))
+        issue = caseHit
+          ? { name: reference.name, kind: 'case', suggestion: norm(caseHit.name) }
+          : { name: reference.name, kind: 'notFound' }
+      }
+      if (!issues.some((item) => item.name === issue.name && item.kind === issue.kind))
+        issues.push(issue)
+    }
+  }
+  return issues
+}
+
+/**
+ * 把诊断结果渲染成人话。四处提示（授权面板 / 侧栏徽标 / 请求头红字 / 发送 toast）
+ * 共用这一份措辞，避免同一个问题四种说法。
+ */
+export function credentialIssueMessages(
+  credential: any,
+  variables: any[] = [],
+  outputs: any[] = [],
+  translate: (key: string, params?: Record<string, any>) => string
+): string[] {
+  const issues = credentialIssues(credential, variables, outputs)
+  if (!issues.length) return []
+  const refs = (names: string[]) => names.map((name) => `{{${name}}}`).join(', ')
+  const available = (variables || [])
+    .filter((variable) => variable.enabled !== false && normalizeVarName(variable.name))
+    .map((variable) => normalizeVarName(variable.name))
+  const messages: string[] = []
+  const pick = (kind: CredentialIssueKind) => issues.filter((issue) => issue.kind === kind)
+
+  const outputs_ = pick('output')
+  if (outputs_.length)
+    messages.push(translate('auth.unresolvedOutput', { names: refs(outputs_.map((i) => i.name)) }))
+
+  const disabled = pick('disabled')
+  if (disabled.length)
+    messages.push(translate('auth.variableDisabled', { names: refs(disabled.map((i) => i.name)) }))
+
+  const caseIssues = pick('case')
+  if (caseIssues.length)
+    messages.push(
+      translate('auth.variableCase', {
+        names: refs(caseIssues.map((i) => i.name)),
+        suggestion: refs(caseIssues.map((i) => i.suggestion as string)),
+      })
+    )
+
+  const notFound = pick('notFound')
+  if (notFound.length)
+    messages.push(
+      translate('auth.variableNotFound', {
+        names: refs(notFound.map((i) => i.name)),
+        available: available.length ? refs(available.slice(0, 6)) : translate('auth.noVariablesYet'),
+      })
+    )
+  return messages
+}
+
+/** 凭据是否真的可用：有值，且里面的变量引用都拿得到值。 */
+export function credentialSatisfied(
+  scheme: any,
+  value: any,
+  variables: any[] = [],
+  outputs: any[] = []
+): boolean {
+  return (
+    credentialPresent(scheme, value) && credentialVariableIssues(value, variables, outputs).length === 0
+  )
+}
+
+/**
+ * Resolves whether an operation requires credentials and whether the current
+ * credentials satisfy at least one of its security requirements.
+ * OpenAPI semantics: an empty requirement object `{}` means anonymous access is
+ * allowed; an empty `security` array means the operation is explicitly public.
+ */
+export function authStatus(
+  operation: any,
+  spec: any,
+  credentials: any = {},
+  variables: any[] = [],
+  outputs: any[] = []
+): AuthStatus {
+  const requirements: any[] = operation?.security || []
+  const schemesMap = securitySchemes(spec)
+  const schemes: string[] = []
+  const missing: string[] = []
+  const unresolved: string[] = []
+  let required = false
+  let satisfied = false
+  for (const group of requirements) {
+    const names = Object.keys(group || {})
+    if (!names.length) {
+      satisfied = true
+      continue
+    }
+    required = true
+    schemes.push(...names)
+    let groupSatisfied = true
+    for (const name of names) {
+      const issues = credentialVariableIssues(credentials?.[name], variables, outputs)
+      if (issues.length) {
+        groupSatisfied = false
+        unresolved.push(...issues)
+      }
+      if (!credentialPresent(resolveRef(schemesMap[name], spec), credentials?.[name])) {
+        groupSatisfied = false
+        if (!missing.includes(name)) missing.push(name)
+      }
+    }
+    if (groupSatisfied) satisfied = true
+  }
+  return {
+    required,
+    satisfied,
+    schemes: [...new Set(schemes)],
+    missing,
+    unresolved: [...new Set(unresolved)],
+  }
+}
+
+/**
+ * 找出 operation 当前真正能兑现的那一条 security requirement，并解析出对应的 scheme 与凭据。
+ * buildRequest（真正发请求）和 RequestView 的「请求头」预览共用这一份逻辑，
+ * 避免两边算法漂移 —— 以前就是 UI 不知道自己在注入什么，用户看着像"没带令牌"。
+ */
+export function resolvedAuth(
+  operation: any,
+  credentials: any = {},
+  spec: any = {},
+  variables: any[] = []
+): { name: string; scheme: any; credential: Record<string, any> }[] {
+  if (!operation?.security?.length) return []
+  const schemes = securitySchemes(spec)
+  const requirement = operation.security.find((group: any) =>
+    Object.keys(group).every((name: string) =>
+      credentialPresent(resolveRef(schemes[name], spec), credentials[name])
+    )
+  )
+  return Object.keys(requirement || {}).map((name: string) => ({
+    name,
+    scheme: resolveRef(schemes[name], spec),
+    credential: resolveCredential(credentials[name], variables),
+  }))
+}
+
+/**
+ * 用户几乎必然会把文档里那句「这里填：Bearer {token}」照抄进令牌框，
+ * 于是发出 `Authorization: Bearer Bearer eyJ...`，服务端一律 401 ——
+ * 而界面上又看不到真实请求头，只能靠猜。这里把多余的前缀剥掉。
+ */
+export function bearerToken(token: any): string {
+  const raw = String(token ?? '').trim()
+  return /^bearer\s+/i.test(raw) ? raw.replace(/^bearer\s+/i, '').trim() : raw
+}
+
+/**
+ * 单个 scheme 应该写进请求头的名值对。
+ * apiKey 落在 query / cookie 时不产生请求头（query 由 buildRequest 拼到 URL，
+ * cookie 浏览器禁止设置），返回 null。
+ */
+export function authHeader(scheme: any, credential: any): { name: string; value: string } | null {
+  if (!credential) return null
+  if (scheme.type === 'apiKey') {
+    if (scheme.in === 'query' || scheme.in === 'cookie') return null
+    return { name: scheme.name, value: String(credential.token ?? '').trim() }
+  }
+  if (scheme.type === 'basic' || scheme.scheme === 'basic')
+    return {
+      name: 'Authorization',
+      value: `Basic ${btoa(unescape(encodeURIComponent(`${credential.username}:${credential.password || ''}`)))}`,
+    }
+  return { name: 'Authorization', value: `Bearer ${bearerToken(credential.token)}` }
 }
 
 function parameterValue(parameter: any, definition: any, value: string): string[] {
@@ -313,27 +637,16 @@ export function buildRequest(
   query.forEach((value, name) => url.searchParams.append(name, value))
   for (const header of draft.headers || [])
     if (header.enabled !== false && header.name) headers.set(header.name, replace(header.value))
-  if (draft.authEnabled !== false && operation.security.length) {
-    const schemes = securitySchemes(spec)
-    const requirement = operation.security.find((group: any) =>
-      Object.keys(group).every((name) =>
-        credentialPresent(resolveRef(schemes[name], spec), credentials[name])
-      )
-    )
-    for (const name of Object.keys(requirement || {})) {
-      const scheme = resolveRef(schemes[name], spec)
-      const credential = credentials[name]
+  if (draft.authEnabled !== false) {
+    for (const { scheme, credential } of resolvedAuth(operation, credentials, spec, variables)) {
       if (scheme.type === 'apiKey') {
-        if (scheme.in === 'query') url.searchParams.set(scheme.name, credential.token)
+        if (scheme.in === 'query')
+          url.searchParams.set(scheme.name, String(credential.token ?? '').trim())
         else if (scheme.in === 'cookie')
           throw new Error('Cookie API keys must be set on the API origin.')
-        else headers.set(scheme.name, credential.token)
-      } else if (scheme.type === 'basic' || scheme.scheme === 'basic') {
-        headers.set(
-          'Authorization',
-          `Basic ${btoa(unescape(encodeURIComponent(`${credential.username}:${credential.password || ''}`)))}`
-        )
-      } else headers.set('Authorization', `Bearer ${credential.token}`)
+      }
+      const header = authHeader(scheme, credential)
+      if (header) headers.set(header.name, header.value)
     }
   }
   let body: any

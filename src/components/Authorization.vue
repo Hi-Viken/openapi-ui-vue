@@ -27,31 +27,71 @@
           @click="selected = name"
         >
           {{ name }}
-          <span v-if="credentialPresent(resolveRef(value, spec), credentials[name])" class="status-dot" />
+          <span v-if="satisfied(resolveRef(value, spec), credentials[name])" class="status-dot" />
         </button>
       </div>
       <div class="auth-form" :key="selected">
         <div class="section-heading">
           <h2>{{ selected }}</h2>
-          <span :class="credentialPresent(scheme, credential) ? 'success' : 'muted'">
-            {{ credentialPresent(scheme, credential) ? $t('auth.configured') : $t('auth.notConfigured') }}
+          <span :class="satisfied(scheme, credential) ? 'success' : 'muted'">
+            {{ credentialLabel }}
           </span>
         </div>
         <Markdown>{{ scheme.description }}</Markdown>
         <template v-if="basic">
           <label>
             {{ $t('auth.username') }}
-            <input autocomplete="off" :value="credential.username || ''" @input="changeCredential({ username: ($event.target as HTMLInputElement).value })" />
+            <VariableInput
+              autocomplete="off"
+              :model-value="credential.username || ''"
+              :variables="variables"
+              :output-definitions="outputDefinitions"
+              :aria-label="$t('auth.username')"
+              @update:model-value="changeCredential({ username: $event })"
+            />
           </label>
           <label>
             {{ $t('auth.password') }}
-            <input type="password" autocomplete="off" :value="credential.password || ''" @input="changeCredential({ password: ($event.target as HTMLInputElement).value })" />
+            <div class="token-field">
+              <VariableInput
+                :type="showToken ? 'text' : 'password'"
+                autocomplete="off"
+                :model-value="credential.password || ''"
+                :variables="variables"
+                :output-definitions="outputDefinitions"
+                :aria-label="$t('auth.password')"
+                @update:model-value="changeCredential({ password: $event })"
+              />
+              <IconButton
+                :label="showToken ? $t('request.hideValue') : $t('request.showValue')"
+                @click="showToken = !showToken"
+              >
+                <component :is="showToken ? EyeOff : Eye" :size="16" />
+              </IconButton>
+            </div>
           </label>
         </template>
         <label v-else>
           {{ scheme.type === 'apiKey' ? `${scheme.name} (${scheme.in})` : $t('auth.accessToken') }}
-          <input type="password" autocomplete="off" :value="credential.token || ''" @input="changeCredential({ token: ($event.target as HTMLInputElement).value, expiresAt: undefined })" />
+          <div class="token-field">
+            <VariableInput
+              :type="showToken ? 'text' : 'password'"
+              autocomplete="off"
+              :model-value="credential.token || ''"
+              :variables="variables"
+              :output-definitions="outputDefinitions"
+              :aria-label="$t('auth.accessToken')"
+              @update:model-value="changeCredential({ token: $event, expiresAt: undefined })"
+            />
+            <IconButton
+              :label="showToken ? $t('request.hideValue') : $t('request.showValue')"
+              @click="showToken = !showToken"
+            >
+              <component :is="showToken ? EyeOff : Eye" :size="16" />
+            </IconButton>
+          </div>
         </label>
+        <p class="muted">{{ variableHint }}</p>
         <p v-if="credential.expiresAt" class="muted">{{ $t('auth.expires') }} {{ new Date(credential.expiresAt).toLocaleString() }}</p>
         <template v-if="oauth">
           <label v-if="scheme.flows">
@@ -66,16 +106,53 @@
           </label>
           <label v-if="['clientCredentials', 'password'].includes(flowName)">
             {{ $t('auth.clientSecret') }}
-            <input type="password" autocomplete="off" :value="config.clientSecret || ''" @input="changeConfig({ clientSecret: ($event.target as HTMLInputElement).value })" />
+            <div class="token-field">
+              <VariableInput
+                :type="showToken ? 'text' : 'password'"
+                autocomplete="off"
+                :model-value="config.clientSecret || ''"
+                :variables="variables"
+                :output-definitions="outputDefinitions"
+                :aria-label="$t('auth.clientSecret')"
+                @update:model-value="changeConfig({ clientSecret: $event })"
+              />
+              <IconButton
+                :label="showToken ? $t('request.hideValue') : $t('request.showValue')"
+                @click="showToken = !showToken"
+              >
+                <component :is="showToken ? EyeOff : Eye" :size="16" />
+              </IconButton>
+            </div>
           </label>
           <template v-if="flowName === 'password'">
             <label>
               {{ $t('auth.resourceUsername') }}
-              <input :value="config.username || ''" @input="changeConfig({ username: ($event.target as HTMLInputElement).value })" />
+              <VariableInput
+                :model-value="config.username || ''"
+                :variables="variables"
+                :output-definitions="outputDefinitions"
+                :aria-label="$t('auth.resourceUsername')"
+                @update:model-value="changeConfig({ username: $event })"
+              />
             </label>
             <label>
               {{ $t('auth.resourcePassword') }}
-              <input type="password" :value="config.password || ''" @input="changeConfig({ password: ($event.target as HTMLInputElement).value })" />
+              <div class="token-field">
+                <VariableInput
+                  :type="showToken ? 'text' : 'password'"
+                  :model-value="config.password || ''"
+                  :variables="variables"
+                  :output-definitions="outputDefinitions"
+                  :aria-label="$t('auth.resourcePassword')"
+                  @update:model-value="changeConfig({ password: $event })"
+                />
+                <IconButton
+                  :label="showToken ? $t('request.hideValue') : $t('request.showValue')"
+                  @click="showToken = !showToken"
+                >
+                  <component :is="showToken ? EyeOff : Eye" :size="16" />
+                </IconButton>
+              </div>
             </label>
           </template>
           <label v-if="!['clientCredentials', 'password'].includes(flowName)">
@@ -114,11 +191,20 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { KeyRound, LogOut } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
+import { KeyRound, LogOut, Eye, EyeOff } from 'lucide-vue-next'
 import Markdown from './ui/Markdown.vue'
-import { credentialPresent, resolveRef, securitySchemes } from '@/lib/api'
+import VariableInput from './ui/VariableInput.vue'
+import IconButton from './ui/IconButton.vue'
+import {
+  credentialSatisfied,
+  replaceVariables,
+  resolveRef,
+  securitySchemes,
+  credentialIssueMessages,
+} from '@/lib/api'
 import { authorizationUrl, completeAuthorization, defaultClientId, discoverOidc, requestToken } from '@/lib/oauth'
-import type { Credentials, Notify, OpenApiDocument, Operation } from '@/types'
+import type { Credentials, KeyValueRow, Notify, OpenApiDocument, Operation, Variables } from '@/types'
 
 const props = defineProps<{
   spec: OpenApiDocument
@@ -128,6 +214,8 @@ const props = defineProps<{
   notify: Notify
   operation?: Operation
   enabled?: boolean
+  variables?: Variables
+  outputDefinitions?: KeyValueRow[]
 }>()
 
 const emit = defineEmits<{
@@ -136,11 +224,17 @@ const emit = defineEmits<{
   'update:enabled': [enabled: boolean]
 }>()
 
+const { t } = useI18n()
+
+// 花括号不能写进模板字面量（Vue 编译器会把 {{ 当成插值起始符），所以在脚本里拼好
+const variableHint = computed(() => t('auth.variableHint', { open: '{{', close: '}}' }))
+
 const schemes = computed(() => Object.entries(securitySchemes(props.spec)))
 const selected = ref(schemes.value[0]?.[0] || '')
 const configs = ref<Record<string, Record<string, any>>>({})
 const busy = ref(false)
 const callback = ref('')
+const showToken = ref(false)
 
 const hostWindow = typeof window !== 'undefined' ? window : {} as any
 const currentLocation = typeof location !== 'undefined' ? location : {} as any
@@ -152,6 +246,23 @@ const flowName = computed(() => config.value.flow || Object.keys(scheme.value.fl
 const flow = computed(() => scheme.value.flows?.[flowName.value])
 const oauth = computed(() => scheme.value.type === 'oauth2' || scheme.value.type === 'openIdConnect')
 const basic = computed(() => scheme.value.type === 'basic' || scheme.value.scheme === 'basic')
+
+// 令牌里写 {{token}} 而变量没定义时，credentialPresent 只看字符串非空，
+// 会照常显示"已配置"，请求却发出字面量 `Bearer {{token}}`。这里带上变量一起判。
+function satisfied(scheme: any, value: any): boolean {
+  return credentialSatisfied(scheme, value, props.variables ?? [], props.outputDefinitions ?? [])
+}
+
+const credentialLabel = computed(() => {
+  if (satisfied(scheme.value, credential.value)) return t('auth.configured')
+  const messages = credentialIssueMessages(
+    credential.value,
+    props.variables ?? [],
+    props.outputDefinitions ?? [],
+    t as any
+  )
+  return messages.length ? messages.join(' ') : t('auth.notConfigured')
+})
 
 function changeConfig(patch: Record<string, any>) {
   configs.value = { ...configs.value, [selected.value]: { ...config.value, ...patch } }
@@ -168,11 +279,18 @@ async function authorize() {
       ? await discoverOidc(scheme.value.openIdConnectUrl)
       : flow.value
     if (!endpoints) throw new Error('No OAuth flow configured.')
-    const values = {
-      ...config.value,
-      flow: flowName.value,
-      scope: config.value.scope ?? Object.keys(endpoints.scopes || {}).join(' '),
-    }
+    // clientId / clientSecret / 资源所有者密码等也允许来自变量
+    const variables = props.variables ?? []
+    const values = Object.fromEntries(
+      Object.entries({
+        ...config.value,
+        flow: flowName.value,
+        scope: config.value.scope ?? Object.keys(endpoints.scopes || {}).join(' '),
+      }).map(([key, value]) => [
+        key,
+        typeof value === 'string' ? replaceVariables(value, variables) : value,
+      ])
+    )
     if (['password', 'clientCredentials'].includes(flowName.value)) {
       changeCredential(await requestToken(endpoints, values))
     } else {

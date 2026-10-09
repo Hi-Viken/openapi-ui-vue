@@ -1,6 +1,6 @@
 {
   "name": "openapi-ui-vue",
-  "version": "2.0.0",
+  "version": "1.0.9",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,6 +11,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "build:test": "vue-tsc --noEmit && vite build --mode test",
     "build:prod": "vue-tsc --noEmit && vite build --mode production",
+    "build:dotnet": "vue-tsc --noEmit && (if exist dist rmdir /s /q dist) && vite build --mode dotnet",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -41,6 +41,9 @@
         <IconButton :label="$t('runner.deleteCollection')" :disabled="running" @click="deleteCollection">
           <Trash2 :size="17" />
         </IconButton>
+        <IconButton :label="$t('runner.addInterface')" :disabled="running" @click="showAddModal = true">
+          <Plus :size="19" />
+        </IconButton>
         <button v-if="running" class="primary" @click="controller?.abort()">
           <Square :size="15" />
           {{ $t('runner.stop') }}
@@ -96,6 +99,16 @@
           {{ $t('runner.exportResults') }}
         </button>
       </section>
+      <AddToRunnerModal
+        v-if="showAddModal"
+        mode="select-operations"
+        :operations="operations"
+        :existing-ids="collection.requests.map((item) => item.operationId)"
+        :collection-name="collection.name"
+        :spec="spec"
+        @close="showAddModal = false"
+        @add-operations="addOperations"
+      />
     </template>
     <p v-else class="empty">{{ $t('runner.noCollections') }}</p>
   </section>
@@ -108,8 +121,9 @@ import { ArrowDown, ArrowUp, ChevronRight, Download, Plus, Square, Trash2, Uploa
 import IconButton from './ui/IconButton.vue'
 import Method from './ui/Method.vue'
 import PlayIcon from './ui/PlayIcon.vue'
-import { downloadBlob } from '@/lib/api'
-import type { Draft, Notify, Operation, RequestCollection, ResponseData, SavedRequest, Variables } from '@/types'
+import AddToRunnerModal from './ui/AddToRunnerModal.vue'
+import { downloadBlob, makeDraft } from '@/lib/api'
+import type { Draft, Notify, Operation, OpenApiDocument, RequestCollection, ResponseData, SavedRequest, Variables } from '@/types'
 
 const { t } = useI18n()
 
@@ -121,6 +135,7 @@ interface RunnerResult extends ResponseData {
 const props = defineProps<{
   collections: RequestCollection[]
   operations: Operation[]
+  spec: OpenApiDocument
   execute: (operation: Operation, draft: Draft, variables: Variables, signal: AbortSignal) => Promise<{ response: ResponseData; variables: Variables }>
   variables: Variables
   notify: Notify
@@ -138,6 +153,7 @@ const results = ref<RunnerResult[]>([])
 const stopOnError = ref(false)
 const controller = ref<AbortController | null>(null)
 const importInput = ref<HTMLInputElement>()
+const showAddModal = ref(false)
 
 const collection = computed(() => props.collections.find((item) => item.id === selected.value) || props.collections[0])
 
@@ -240,6 +256,24 @@ function openRequest(request: any) {
 
 function removeRequest(id: string) {
   update({ requests: collection.value!.requests.filter((item) => item.id !== id) })
+}
+
+function addOperations(operationIds: string[]) {
+  if (!collection.value) return
+  const requests = [...collection.value.requests]
+  for (const id of operationIds) {
+    const operation = props.operations.find((item) => item.id === id)
+    if (!operation) continue
+    requests.push({
+      id: crypto.randomUUID(),
+      operationId: operation.id,
+      draft: makeDraft(operation, props.spec),
+      enabled: true,
+    })
+  }
+  update({ requests })
+  showAddModal.value = false
+  props.notify(t('notify.addedToCollection', { name: collection.value.name }))
 }
 
 function exportResults() {

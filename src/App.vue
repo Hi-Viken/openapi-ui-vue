@@ -95,6 +95,8 @@ const loaded = ref<LoadedSpec | null>(
 const error = ref('')
 const importing = ref(false)
 const theme = ref(initialTheme(props.storage))
+// 首屏立即落盘主题，否则会闪成 :root 的浅色默认值（之前 initialTheme 的默认值从未真正生效）
+document.body.dataset.theme = theme.value
 const toast = ref<Toast | null>(null)
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -117,7 +119,7 @@ function handleImport(spec: OpenApiDocument, source: string, text: string) {
   } catch {
     notify(t('notify.importSaveFailed'), true)
   }
-  if (props.specName) spec.info = { ...spec.info, title: props.specName }
+  if (props.specName && !spec.info?.title) spec.info = { ...spec.info, title: props.specName }
   loaded.value = {
     spec,
     source,
@@ -141,7 +143,7 @@ onMounted(async () => {
     const imported = !window.openapiHost && readJson(props.storage, importKey, null) as any
     if (imported?.text) {
       const spec = parseSpec(imported.text)
-      if (props.specName) spec.info = { ...spec.info, title: props.specName }
+      if (props.specName && !spec.info?.title) spec.info = { ...spec.info, title: props.specName }
       loaded.value = {
         spec,
         source: imported.source,
@@ -152,7 +154,7 @@ onMounted(async () => {
     const response = await fetch(source, { signal: abort.signal })
     if (!response.ok) throw new Error(`Cannot load specification: HTTP ${response.status}`)
     const spec = parseSpec(await response.text())
-    if (props.specName) spec.info = { ...spec.info, title: props.specName }
+    if (props.specName && !spec.info?.title) spec.info = { ...spec.info, title: props.specName }
     if (!abort.signal.aborted) loaded.value = { spec, source }
   } catch (failure) {
     if (!(failure instanceof DOMException && failure.name === 'AbortError')) {

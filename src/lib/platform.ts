@@ -37,6 +37,33 @@ export function browserStorage(): StorageLike {
   }
 }
 
+/**
+ * 会话级存储：标签页内刷新 / Vite 热重载都还在，关掉标签页就清掉。
+ * 用于「没勾记住凭据」时的兜底 —— 以前这种情况凭据只活在内存里，
+ * 改前端代码触发整页刷新后 token 直接消失，用户以为没配上。
+ */
+export function sessionStorageLike(): StorageLike {
+  return {
+    getItem(key) {
+      try {
+        return window.sessionStorage.getItem(key)
+      } catch {
+        return null
+      }
+    },
+    setItem(key, value) {
+      try {
+        window.sessionStorage.setItem(key, value)
+      } catch {}
+    },
+    removeItem(key) {
+      try {
+        window.sessionStorage.removeItem(key)
+      } catch {}
+    },
+  }
+}
+
 export function readJson<T = any>(storage: StorageLike, key: string, fallback: T): T {
   try {
     return JSON.parse(storage.getItem(key)!) ?? fallback
@@ -141,5 +168,5 @@ export function initialTheme(storage: StorageLike): string {
     'contrast',
   ].includes(saved!)
     ? saved!
-    : 'system'
+    : 'graphite'
 }

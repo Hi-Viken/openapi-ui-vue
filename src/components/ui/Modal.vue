@@ -16,7 +16,7 @@ import IconButton from './IconButton.vue'
 import { X } from 'lucide-vue-next'
 
 defineProps<{ title: string }>()
-defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: [] }>()
 
 const dialogRef = ref<HTMLDialogElement>()
 
@@ -25,7 +25,7 @@ onUnmounted(() => dialogRef.value?.close())
 
 function onBackdropClick(event: MouseEvent) {
   if (event.target === dialogRef.value) {
-    (event.currentTarget as HTMLElement).dispatchEvent(new Event('close'))
+    emit('close')
   }
 }
 </script>

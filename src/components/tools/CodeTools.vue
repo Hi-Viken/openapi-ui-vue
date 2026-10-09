@@ -1,7 +1,7 @@
 <template>
-  <section class="tool-view code-tools">
+  <section :class="['code-tools', embedded ? 'code-tools-inline' : 'tool-view']">
     <header class="section-heading">
-      <h1>{{ $t('code.title') }}</h1>
+      <h1 v-if="!embedded">{{ $t('code.title') }}</h1>
       <div class="actions">
         <CopyButton :value="code" :notify="notify" />
         <IconButton :label="$t('code.download')" :disabled="!code" @click="downloadCode">
@@ -95,10 +95,11 @@ const props = defineProps<{
   spec: OpenApiDocument
   operation?: Operation
   draft?: Draft
-  server: string
+  server?: string
   variables: Variables
-  credentials: Credentials
-  notify: Notify
+  credentials?: Credentials
+  notify?: Notify
+  embedded?: boolean
 }>()
 
 const { t } = useI18n()
@@ -128,7 +129,7 @@ const files = computed<Record<string, string>>(() => {
   generateError.value = ''
   try {
     if (mode.value === 'Request snippet' && props.operation) {
-      const request = buildRequest(props.operation, props.draft, props.server, props.variables, props.credentials, props.spec)
+      const request = buildRequest(props.operation, props.draft, props.server || '', props.variables, props.credentials || {}, props.spec)
       const body = request.options.body instanceof URLSearchParams
         ? request.options.body.toString()
         : typeof request.options.body === 'string' ? request.options.body : ''

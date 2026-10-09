@@ -8,6 +8,7 @@
         <img class="brand-logo" :src="uiAssetUrl('openapi-ui.png')" :alt="$t('workspace.logo')" />
         <span>{{ $t('app.title') }}</span>
       </a>
+      <span class="app-version" :title="$t('workspace.frontendVersion')">v{{ APP_VERSION }}</span>
       <a
         class="github-link"
         href="https://github.com/jakubkozera/openapi-ui"
@@ -108,11 +109,24 @@
         <span class="count">{{ operations.length }}</span>
       </button>
       <div class="request-tree" ref="requestTreeRef">
-        <details v-for="group in groups" :key="`${group}:${query}:${method}:${onlyFavorites}`" open>
+        <details v-for="group in groups" :key="`${group}:${query}:${method}:${onlyFavorites}`">
           <summary>
-            <ChevronRight class="expand-chevron" :size="14" />
-            {{ group }}
-            <span>{{ filtered.filter((item) => (item.tags?.[0] || $t('workspace.requests')) === group).length }}</span>
+            <div class="group-head-row">
+              <ChevronRight class="expand-chevron" :size="14" />
+              <span class="group-name">{{ group }}</span>
+              <span class="count">{{ filtered.filter((item) => (item.tags?.[0] || $t('workspace.requests')) === group).length }}</span>
+            </div>
+            <p v-if="tagDescription(group)" class="group-desc">{{ tagDescription(group) }}</p>
+            <a
+              v-if="tagDocs(group)"
+              class="group-docs"
+              :href="tagDocs(group)!.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              @click.stop
+              >{{ tagDocs(group)!.description || $t('workspace.tagDocs') }}
+              <ExternalLink :size="11" /></a
+            >
           </summary>
           <button
             v-for="item in filtered.filter((i) => (i.tags?.[0] || $t('workspace.requests')) === group)"
@@ -123,6 +137,12 @@
           >
             <Method :method="item.method" />
             <span>{{ item.summary || item.path }}</span>
+            <Lock
+              v-if="authById[item.id]?.required"
+              :size="12"
+              :class="['tree-auth', authById[item.id].satisfied ? 'is-ok' : 'is-missing']"
+              :title="authTooltip(authById[item.id])"
+            />
             <Star v-if="state.favorites.includes(item.id)" :size="12" />
           </button>
         </details>
@@ -131,7 +151,7 @@
       <footer class="sidebar-footer">
         <span class="status-dot" />
         {{ operations.length }} {{ $t('workspace.requests').toLowerCase() }}
-        <span>v{{ spec.info?.version || '1.0' }}</span>
+        <span>v:{{ spec.info?.version || '1.0' }}</span>
       </footer>
     </aside>
 
@@ -150,7 +170,7 @@
     />
 
     <main class="workspace-main">
-      <div class="request-tabs" role="tablist" :aria-label="$t('workspace.openRequests')" @keydown="onTabKeydown">
+      <div class="request-tabs" role="tablist" :aria-label="$t('workspace.openRequests')" @keydown="onTabKeydown" @wheel="onTabsWheel">
         <button
           role="tab"
           :aria-selected="state.active === 'overview' && view === 'requests'"
@@ -192,6 +212,16 @@
         @favorite="handleFavorite"
         @add-to-runner="handleAddToRunner"
         @action="handleContextMenuAction"
+      />
+
+      <AddToRunnerModal
+        v-if="showAddRunnerModal"
+        mode="select-runner"
+        :collections="state.collections"
+        :operation-label="pendingOperationLabel"
+        @close="showAddRunnerModal = false; pendingAddOperationId = null"
+        @add-to-runner="onPickRunner"
+        @create-runner="onCreateRunner"
       />
 
       <div class="server-bar">
@@ -245,11 +275,13 @@
           :pending="pending[operation.id]"
           :favorite="state.favorites.includes(operation.id)"
           @favorite="dispatch({ type: 'favorite', id: operation.id })"
-          @add-to-collection="addToRunner"
+          @add-to-collection="openAddRunnerModal"
           :notify="notify"
           :files="files[operation.id] || {}"
           @file="onFile"
           @auth="view = 'auth'"
+          :server="server"
+          :credentials="credentials"
           :layout="requestLayout"
           :split="requestSplit"
           @update:layout="requestLayout = $event"
@@ -284,6 +316,8 @@
           :notify="notify"
           :operation="operation"
           :enabled="active?.draft.authEnabled"
+          :variables="state.variables"
+          :output-definitions="outputDefinitions"
           @update:enabled="onAuthEnabled"
         />
         <Runner
@@ -291,19 +325,10 @@
           :collections="state.collections"
           @change="onCollectionsChange"
           :operations="operations"
+          :spec="props.spec"
           @open="openOperation"
           :execute="execute"
           :variables="state.variables"
-          :notify="notify"
-        />
-        <CodeTools
-          v-else-if="view === 'code'"
-          :spec="spec"
-          :operation="operation"
-          :draft="active?.draft"
-          :server="server"
-          :variables="state.variables"
-          :credentials="credentials"
           :notify="notify"
         />
       </div>
@@ -324,18 +349,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, toRaw } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Braces,
   ChevronDown,
   ChevronRight,
-  Code2,
+  ExternalLink,
   FolderOpen,
   Github,
   History as HistoryIcon,
   House,
   KeyRound,
+  Lock,
   Menu,
   PlayIcon,
   Search,
@@ -353,10 +379,11 @@ import Variables from './tools/Variables.vue'
 import History from './tools/History.vue'
 import Authorization from './Authorization.vue'
 import Runner from './Runner.vue'
-import CodeTools from './tools/CodeTools.vue'
+import AddToRunnerModal from './ui/AddToRunnerModal.vue'
 import { useWorkspace } from '@/composables/useWorkspace'
 import { persistWorkspace } from '@/lib/workspace'
 import {
+  authStatus,
   buildRequest,
   extractOutputs,
   getOperations,
@@ -364,10 +391,15 @@ import {
   METHODS,
   serverUrl as getServerUrl,
   sendRequest,
+  credentialIssueMessages,
+  variableReferences,
+  tagMetaMap,
 } from '@/lib/api'
+import { APP_VERSION } from '@/lib/version'
 import { completeAuthorization } from '@/lib/oauth'
-import { readJson } from '@/lib/platform'
+import { readJson, sessionStorageLike } from '@/lib/platform'
 import type {
+  AuthStatus,
   Credentials,
   Draft,
   Notify,
@@ -380,14 +412,13 @@ import type {
   Variables as VariableList,
 } from '@/types'
 
-const toolIds = ['requests', 'history', 'variables', 'auth', 'runner', 'code'] as const
+const toolIds = ['requests', 'history', 'variables', 'auth', 'runner'] as const
 const toolIcons: Record<string, any> = {
   requests: FolderOpen,
   history: HistoryIcon,
   variables: Braces,
   auth: KeyRound,
   runner: PlayIcon,
-  code: Code2,
 }
 
 const SIDEBAR_WIDTH_KEY = 'openapi-ui:sidebar-width'
@@ -455,14 +486,75 @@ const pending = ref<Record<string, boolean>>({})
 const files = ref<Record<string, Record<string, File | undefined>>>({})
 const savedRequest = ref<SavedRequest | null>(null)
 const contextMenu = ref<{ id: string; x: number; y: number } | null>(null)
+const showAddRunnerModal = ref(false)
+const pendingAddOperationId = ref<string | null>(null)
 const storageFailed = ref(false)
 
 const controllers = new Map<string, AbortController>()
 const sessionCredentials = ref(`${key}:credentials`)
+// 未勾「记住凭据」时退到会话级存储：开发时改代码触发整页刷新不该把 token 冲掉
+const credentialCache = sessionStorageLike()
 const remember = ref(!!readJson(props.storage, sessionCredentials.value, null))
-const credentials = ref<Credentials>(readJson(props.storage, sessionCredentials.value, {}))
+const credentials = ref<Credentials>(
+  readJson(props.storage, sessionCredentials.value, null) ??
+    readJson(credentialCache, sessionCredentials.value, {})
+)
 
 const operation = computed(() => operations.value.find((item) => item.id === state.value.active))
+
+const authById = computed(() =>
+  Object.fromEntries(
+    operations.value.map((item: Operation) => [
+      item.id,
+      authStatus(item, props.spec, credentials.value, state.value.variables, outputDefinitions.value),
+    ])
+  ) as Record<string, AuthStatus>
+)
+
+/**
+ * 取不到值的引用：被禁用、大小写对不上、压根没这个变量 —— 三种补救办法完全不同，
+ * 一律说"变量不存在"只会让人对着变量面板怀疑人生。
+ */
+function unresolvedMessage(status: AuthStatus | undefined): string {
+  if (!status) return ''
+  const messages: string[] = []
+  for (const name of status.schemes)
+    for (const message of credentialIssueMessages(
+      credentials.value?.[name],
+      state.value.variables ?? [],
+      outputDefinitions.value ?? [],
+      t as any
+    ))
+      if (!messages.includes(message)) messages.push(message)
+  return messages.join(' ')
+}
+
+function authTooltip(status: AuthStatus | undefined): string {
+  if (!status) return ''
+  if (status.unresolved.length) return unresolvedMessage(status)
+  if (status.satisfied) return `${t('request.authRequired')}: ${status.schemes.join(', ')}`
+  return t('request.authMissingHint', { schemes: status.missing.join(', ') })
+}
+
+/**
+ * 请求体 / 表单 / 请求头 / 参数 / 路径里引用了、但「变量」面板取不到值的 {{{x}}}。
+ * 只认 'missing'（真没定义）；'pending' 是输出变量还没跑来源请求，属预期，不报警。
+ * 与 credentialIssues 同一原则：界面上看着填了、实际发出去却是字面量占位符，最容易静默 401/报错。
+ */
+function requestVariableIssues(draft: any, variables: any[] = [], outputs: any[] = []): string[] {
+  const targets: string[] = []
+  if (draft?.path) targets.push(draft.path)
+  for (const item of draft?.parameters || []) if (item.value) targets.push(item.value)
+  for (const item of draft?.headers || []) if (item.enabled !== false && item.value) targets.push(item.value)
+  for (const item of draft?.form || [])
+    if (item.enabled !== false && !item.file && item.value) targets.push(item.value)
+  if (draft?.body) targets.push(draft.body)
+  const missing = new Set<string>()
+  for (const text of targets)
+    for (const ref of variableReferences(text, variables, outputs))
+      if (ref.status === 'missing') missing.add(ref.name)
+  return [...missing]
+}
 
 const rawBase = document.querySelector<HTMLMetaElement>('meta[name="openapi-base-url"]')?.content
 const defaultServer = computed(() =>
@@ -489,7 +581,16 @@ const filtered = computed(() =>
         .includes(query.value)
   )
 )
-const groups = computed(() => [...new Set(filtered.value.map((item) => item.tags?.[0] || 'Requests'))])
+const groups = computed(() => [...new Set(filtered.value.map((item) => item.tags?.[0] || t('workspace.requests')))])
+
+/** spec.tags 的 name → { description, externalDocs } 映射；无对应 tag 时回退空记录（忽略） */
+const tagMeta = computed(() => tagMetaMap(props.spec))
+function tagDescription(group: string): string | undefined {
+  return tagMeta.value.get(group)?.description
+}
+function tagDocs(group: string): { description?: string; url: string } | undefined {
+  return tagMeta.value.get(group)?.externalDocs
+}
 
 const outputDefinitions = computed(() => [
   ...state.value.tabs.flatMap((tab: { draft: Draft }) => tab.draft.outputs || []),
@@ -557,36 +658,52 @@ function closeTabs(ids: string[], action: { type: string; id: string }) {
   files.value = nextFiles
 }
 
-function addTabToRunner(tabId: string) {
-  const tab = state.value.tabs.find((item: any) => item.id === tabId)
-  const tabOperation = operations.value.find((item) => item.id === tabId)
-  if (!tab || !tabOperation) return
-  const collection = state.value.collections[0] || {
-    id: crypto.randomUUID(),
-    name: props.spec.info?.title || 'Collection',
-    requests: [],
-    delay: 0,
-  }
+/** 深拷贝 draft：先 toRaw 剥掉 Vue 响应式 Proxy，否则 structuredClone 会抛 DataCloneError */
+function cloneDraft(draft: Draft): Draft {
+  return structuredClone(toRaw(draft))
+}
+
+function addRequestToCollection(collectionId: string, operation: Operation, draft: Draft): string | null {
+  const collection = state.value.collections.find((item: any) => item.id === collectionId)
+  if (!collection) return null
   const request = {
     id: crypto.randomUUID(),
-    operationId: tabOperation.id,
-    draft: structuredClone(tab.draft),
+    operationId: operation.id,
+    draft: cloneDraft(draft),
     enabled: true,
   }
   const updated = { ...collection, requests: [...collection.requests, request] }
   dispatch({
     type: 'update',
     patch: {
-      collections: state.value.collections.length
-        ? state.value.collections.map((item: any) => (item.id === collection.id ? updated : item))
-        : [updated],
+      collections: state.value.collections.map((item: any) => (item.id === collectionId ? updated : item)),
     },
   })
-  props.notify(t('notify.addedToCollection', { name: collection.name }))
+  return collection.name
 }
 
-function addToRunner() {
-  if (operation.value && state.value.active) addTabToRunner(operation.value.id)
+/** 把当前（或指定）标签对应的请求，加入选中的运行器；若选「新建」则先建集合再添加 */
+function addToRunner(target: { collectionId?: string; newName?: string } = {}) {
+  const tabId = operation.value?.id
+  if (!tabId || !state.value.active) return
+  const tab = state.value.tabs.find((item: any) => item.id === tabId)
+  const tabOperation = operations.value.find((item) => item.id === tabId)
+  if (!tab || !tabOperation) return
+  if (target.collectionId) {
+    const name = addRequestToCollection(target.collectionId, tabOperation, tab.draft)
+    if (name) props.notify(t('notify.addedToCollection', { name }))
+    return
+  }
+  if (target.newName) {
+    const entry = {
+      id: crypto.randomUUID(),
+      name: target.newName.trim(),
+      requests: [{ id: crypto.randomUUID(), operationId: tabOperation.id, draft: cloneDraft(tab.draft), enabled: true }],
+      delay: 0,
+    }
+    dispatch({ type: 'update', patch: { collections: [...state.value.collections, entry] } })
+    props.notify(t('notify.addedToCollection', { name: entry.name }))
+  }
 }
 
 async function execute(
@@ -650,6 +767,33 @@ async function send(requestFiles: Record<string, File | undefined>) {
   if (!operation.value || !state.value.active) return
   const id = operation.value.id
   if (controllers.has(id)) return
+  const status = authStatus(
+    operation.value,
+    props.spec,
+    credentials.value,
+    state.value.variables,
+    outputDefinitions.value
+  )
+  if (status.required && active.value?.draft?.authEnabled !== false && !status.satisfied)
+    props.notify(
+      status.unresolved.length
+        ? unresolvedMessage(status)
+        : t('notify.missingCredentials', {
+            schemes: status.missing.join(', ') || status.schemes.join(', '),
+          })
+    )
+  const missingVars = requestVariableIssues(
+    active.value!.draft,
+    state.value.variables,
+    outputDefinitions.value
+  )
+  if (missingVars.length)
+    props.notify(
+      t('notify.unresolvedRequestVariable', {
+        names: missingVars.map((name) => `{{${name}}}`).join(', '),
+      }),
+      true
+    )
   const controller = new AbortController()
   controllers.set(id, controller)
   pending.value = { ...pending.value, [id]: true }
@@ -703,8 +847,10 @@ function onCollectionsChange(collections: RequestCollection[]) {
   dispatch({ type: 'update', patch: { collections } })
 }
 
-function onCredentialsChange(credentials: Credentials) {
-  credentials.value = credentials
+// 参数名不能叫 credentials —— 会遮蔽同名的 ref，写成 `credentials.value = credentials`
+// 就变成给参数对象挂了个自引用的 .value，ref 从未更新（输入即被回写冲掉）。
+function onCredentialsChange(next: Credentials) {
+  credentials.value = next
 }
 
 function onAuthEnabled(authEnabled: boolean) {
@@ -750,7 +896,7 @@ function saveToCollection() {
               ...collection,
               requests: collection.requests.map((request: any) =>
                 request.id === savedRequest.value!.requestId
-                  ? { ...request, draft: structuredClone(active.value.draft) }
+                  ? { ...request, draft: cloneDraft(active.value.draft) }
                   : request
               ),
             }
@@ -774,9 +920,36 @@ function handleFavorite() {
 
 function handleAddToRunner() {
   if (contextMenu.value) {
-    addTabToRunner(contextMenu.value.id)
+    pendingAddOperationId.value = contextMenu.value.id
     contextMenu.value = null
+    showAddRunnerModal.value = true
   }
+}
+
+function openAddRunnerModal() {
+  if (operation.value?.id) {
+    pendingAddOperationId.value = operation.value.id
+    showAddRunnerModal.value = true
+  }
+}
+
+const pendingOperationLabel = computed(() => {
+  const id = pendingAddOperationId.value
+  if (!id) return ''
+  const op = operations.value.find((item) => item.id === id)
+  return op ? (op.summary || `${op.method.toUpperCase()} ${op.path}`) : ''
+})
+
+function onPickRunner(collectionId: string) {
+  addToRunner({ collectionId })
+  showAddRunnerModal.value = false
+  pendingAddOperationId.value = null
+}
+
+function onCreateRunner(name: string) {
+  addToRunner({ newName: name })
+  showAddRunnerModal.value = false
+  pendingAddOperationId.value = null
 }
 
 function handleContextMenuAction(action: string, ids: string[]) {
@@ -832,6 +1005,15 @@ function onTabKeydown(event: KeyboardEvent) {
   tabs[target].click()
 }
 
+/** 选项卡过多时，纵向滚轮驱动横向滚动条，方便浏览（shell 本身禁止了页面纵向滚动） */
+function onTabsWheel(event: WheelEvent) {
+  const el = event.currentTarget as HTMLElement
+  if (el.scrollWidth <= el.clientWidth) return
+  if (event.deltaY === 0) return
+  el.scrollLeft += event.deltaY
+  event.preventDefault()
+}
+
 watch(sidebarWidth, (width) => {
   try {
     props.storage.setItem(SIDEBAR_WIDTH_KEY, String(width))
@@ -846,9 +1028,15 @@ watch([requestLayout, requestSplit], ([layout, split]) => {
 })
 
 watch([credentials, remember], () => {
+  const serialized = JSON.stringify(credentials.value)
   try {
-    if (remember.value) props.storage.setItem(sessionCredentials.value, JSON.stringify(credentials.value))
-    else props.storage.removeItem(sessionCredentials.value)
+    if (remember.value) {
+      props.storage.setItem(sessionCredentials.value, serialized)
+      credentialCache.removeItem(sessionCredentials.value)
+    } else {
+      props.storage.removeItem(sessionCredentials.value)
+      credentialCache.setItem(sessionCredentials.value, serialized)
+    }
   } catch {
     props.notify(t('notify.credentialsSaveFailed'), true)
   }

@@ -22,6 +22,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import InfoTip from './InfoTip.vue'
 import { variableReferences } from '@/lib/api'
+import { referenceDescription as describeReference } from '@/lib/variableText'
 import type { KeyValueRow, Variables } from '@/types'
 
 defineOptions({ inheritAttrs: false })
@@ -48,15 +49,6 @@ const status = computed(() => {
 })
 
 function referenceDescription(reference: any): string {
-  const heading = `${reference.output ? t('ui.outputVariable') : t('ui.variable')}: {{${reference.name}}}`
-  const details =
-    reference.status === 'resolved'
-      ? `${t('ui.value')} ${reference.value === '' ? t('ui.emptyString') : reference.value}`
-      : reference.status === 'pending'
-        ? t('ui.pendingOutput')
-        : reference.output
-          ? t('ui.missingOutput')
-          : t('ui.missingVariable')
-  return [heading, ...reference.paths.map((p: string) => `JSONPath: ${p}`), details].join('\n\n')
+  return describeReference(reference, t)
 }
 </script>

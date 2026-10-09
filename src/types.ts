@@ -8,6 +8,15 @@ export interface Operation extends Record<string, any> {
   security: Record<string, string[]>[]
 }
 
+export interface AuthStatus {
+  required: boolean
+  satisfied: boolean
+  schemes: string[]
+  missing: string[]
+  /** 凭据里引用了但取不到值的变量名，如 ['token'] —— 界面要提示，别静默发占位符 */
+  unresolved: string[]
+}
+
 export interface KeyValueRow extends Record<string, any> {
   name: string
   value?: string

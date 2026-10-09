@@ -5,12 +5,20 @@
         <div>
           <div class="eyebrow">{{ operation.tags?.[0] || $t('request.requests') }}</div>
           <h1>{{ operation.summary || operation.operationId || operation.path }}</h1>
+          <div class="auth-badges">
+            <span :class="['auth-badge', authClass]" :title="authTitle">
+              <LockOpen v-if="!auth.required" :size="12" />
+              <ShieldAlert v-else-if="authDisabled || !auth.satisfied" :size="12" />
+              <Lock v-else :size="12" />
+              {{ authLabel }}
+            </span>
+          </div>
         </div>
         <div class="actions">
           <IconButton :label="favorite ? $t('request.removeFavorite') : $t('request.addFavorite')" :aria-pressed="favorite" @click="$emit('favorite')">
             <Star :size="18" :fill="favorite ? 'currentColor' : 'none'" />
           </IconButton>
-          <IconButton v-if="operation.security.length > 0" :label="$t('request.configureAuth')" @click="$emit('auth')">
+          <IconButton v-if="auth.required" :class="{ 'needs-attention': !auth.satisfied }" :label="$t('request.configureAuth')" @click="$emit('auth')">
             <KeyRound :size="18" />
           </IconButton>
           <IconButton :label="$t('request.addToRunner')" @click="$emit('add-to-collection')">
@@ -59,14 +67,46 @@
           locations
           :add-label="$t('request.addParameter')"
         />
-        <KeyValueEditor
-          v-else-if="tab === 'Headers'"
-          :rows="draft.headers"
-          :variables="variables"
-          :output-definitions="outputDefinitions"
-          @change="$emit('change', { headers: $event })"
-          :add-label="$t('request.addHeader')"
-        />
+        <template v-else-if="tab === 'Headers'">
+          <div v-if="authDisabled" class="muted auth-injected-note">
+            <ShieldAlert :size="13" />
+            {{ $t('request.authHeadersDisabled') }}
+          </div>
+          <div v-else-if="unresolvedHint" class="auth-injected-note is-error">
+            <ShieldAlert :size="13" />
+            {{ unresolvedHint }}
+          </div>
+          <div v-else-if="auth.required && !auth.satisfied" class="muted auth-injected-note">
+            <ShieldAlert :size="13" />
+            {{ $t('request.authMissingHint', { schemes: auth.missing.join(', ') || auth.schemes.join(', ') }) }}
+          </div>
+          <!-- 提示归提示，注入的实际内容照样展示：用户得看见"到底会发出什么" -->
+          <div v-if="authHeaders.length" class="auth-injected">
+            <p class="muted">
+              {{ $t('request.authHeadersAuto') }}
+              <span class="auth-injected-lock">({{ auth.schemes.join(', ') }})</span>
+            </p>
+            <div v-for="header in authHeaders" :key="header.name" class="auth-injected-row">
+              <code>{{ header.name }}</code>
+              <span class="auth-injected-value">{{ revealed ? header.value : mask(header.value) }}</span>
+              <IconButton
+                :label="revealed ? $t('request.hideValue') : $t('request.showValue')"
+                @click="revealed = !revealed"
+              >
+                <EyeOff v-if="revealed" :size="15" />
+                <Eye v-else :size="15" />
+              </IconButton>
+              <CopyButton :value="header.value" :notify="notify" />
+            </div>
+          </div>
+          <KeyValueEditor
+            :rows="draft.headers"
+            :variables="variables"
+            :output-definitions="outputDefinitions"
+            @change="$emit('change', { headers: $event })"
+            :add-label="$t('request.addHeader')"
+          />
+        </template>
         <template v-else-if="tab === 'Body'">
           <div class="body-toolbar">
             <label>
@@ -125,6 +165,17 @@
             <pre v-if="getResponseSchema(value)">{{ JSON.stringify(getResponseSchema(value), null, 2) }}</pre>
           </details>
         </div>
+        <CodeTools
+          v-else-if="tab === 'Code'"
+          embedded
+          :spec="spec"
+          :operation="operation"
+          :draft="draft"
+          :server="server"
+          :variables="variables"
+          :credentials="credentials"
+          :notify="notify"
+        />
         <KeyValueEditor
           v-else-if="tab === 'Output variables'"
           :rows="draft.outputs"
@@ -215,7 +266,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronRight, Columns2, Download, KeyRound, Plus, Rows2, Square, Star } from 'lucide-vue-next'
+import { ChevronRight, Columns2, Download, Eye, EyeOff, KeyRound, Lock, LockOpen, Plus, Rows2, ShieldAlert, Square, Star } from 'lucide-vue-next'
 import IconButton from './ui/IconButton.vue'
 import Method from './ui/Method.vue'
 import VariableHelp from './ui/VariableHelp.vue'
@@ -225,8 +276,18 @@ import CodeEditor from './ui/CodeEditor.vue'
 import CopyButton from './ui/CopyButton.vue'
 import Markdown from './ui/Markdown.vue'
 import PlayIcon from './ui/PlayIcon.vue'
-import { bodyExample, downloadBlob, exampleFor, resolveRef } from '@/lib/api'
-import type { Draft, Notify, OpenApiDocument, Operation, ResponseData, Variables, KeyValueRow } from '@/types'
+import CodeTools from './tools/CodeTools.vue'
+import {
+  authHeader,
+  authStatus,
+  bodyExample,
+  downloadBlob,
+  exampleFor,
+  resolveRef,
+  resolvedAuth,
+  credentialIssueMessages,
+} from '@/lib/api'
+import type { Credentials, Draft, Notify, OpenApiDocument, Operation, ResponseData, Variables, KeyValueRow } from '@/types'
 
 const props = withDefaults(defineProps<{
   operation: Operation
@@ -241,12 +302,16 @@ const props = withDefaults(defineProps<{
   files?: Record<string, File | undefined>
   layout?: 'stacked' | 'columns'
   split?: number
+  server?: string
+  credentials?: Credentials
 }>(), {
   variables: () => [],
   outputDefinitions: () => [],
   files: () => ({}),
   layout: 'stacked',
   split: 58,
+  server: '',
+  credentials: () => ({}),
 })
 
 const emit = defineEmits<{
@@ -273,6 +338,7 @@ const requestTabs = computed(() => [
   { key: 'Headers', label: t('request.headers') },
   { key: 'Body', label: t('request.body') },
   { key: 'Documentation', label: t('request.documentation') },
+  { key: 'Code', label: t('tools.code') },
   { key: 'Output variables', label: t('request.outputVariables') },
 ])
 
@@ -283,6 +349,64 @@ const responseTabs = computed(() => [
 ])
 
 const effectiveLayout = computed(() => narrow.value ? 'stacked' : props.layout)
+
+const auth = computed(() =>
+  authStatus(props.operation, props.spec, props.credentials, props.variables, props.outputDefinitions)
+)
+const authDisabled = computed(() => props.draft?.authEnabled === false)
+
+// 鉴权注入的请求头不进 draft.headers，以前用户在「请求头」页签里看不到它，
+// 就以为令牌没带上。这里按 buildRequest 的同一套逻辑算出来，只读展示。
+const authHeaders = computed(() =>
+  authDisabled.value
+    ? []
+    : resolvedAuth(props.operation, props.credentials, props.spec, props.variables)
+        .map(({ scheme, credential }) => authHeader(scheme, credential))
+        .filter((header): header is { name: string; value: string } => !!header?.value)
+)
+const revealed = ref(false)
+
+function mask(value: string): string {
+  const match = /^(\S+)\s+(.+)$/.exec(value)
+  if (!match) return '•'.repeat(Math.min(value.length, 24))
+  const [, prefix, secret] = match
+  if (secret.length <= 8) return `${prefix} ${'•'.repeat(secret.length)}`
+  return `${prefix} ${secret.slice(0, 4)}${'•'.repeat(8)}${secret.slice(-4)}`
+}
+
+const authClass = computed(() => {
+  if (!auth.value.required) return 'is-none'
+  if (authDisabled.value) return 'is-disabled'
+  return auth.value.satisfied ? 'is-ok' : 'is-missing'
+})
+
+const authLabel = computed(() => {
+  if (!auth.value.required) return t('request.authNone')
+  if (authDisabled.value) return t('request.authDisabled')
+  if (auth.value.satisfied) return auth.value.schemes.join(' / ')
+  if (auth.value.unresolved.length) return `${t('request.authRequired')} · {{${auth.value.unresolved.join(', ')}}}`
+  return `${t('request.authRequired')} · ${t('auth.notConfigured')}`
+})
+
+const unresolvedHint = computed(() => {
+  const messages: string[] = []
+  for (const name of auth.value.schemes)
+    for (const message of credentialIssueMessages(
+      props.credentials?.[name],
+      props.variables ?? [],
+      props.outputDefinitions ?? [],
+      t as any
+    ))
+      if (!messages.includes(message)) messages.push(message)
+  return messages.join(' ')
+})
+
+const authTitle = computed(() => {
+  if (unresolvedHint.value) return unresolvedHint.value
+  if (auth.value.required && !auth.value.satisfied && auth.value.missing.length)
+    return t('request.authMissingHint', { schemes: auth.value.missing.join(', ') })
+  return authLabel.value
+})
 
 const contentTypes = computed(() => Object.keys(props.operation.requestBody?.content || {}))
 const allContentTypes = computed(() => [

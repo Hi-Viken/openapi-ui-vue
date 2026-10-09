@@ -1,4 +1,5 @@
 node_modules
-dist
+# 构建时的临时产物：vite 在 Windows 下无法回收旧 dist/，先 mv 成 dist* 再构建
+dist*
 .vite
 *.local

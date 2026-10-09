@@ -11,8 +11,11 @@ function detectLocale(): string {
     const normalized = normalizeLocale(stored)
     if (SUPPORTED.includes(normalized as any)) return normalized
   }
-  const nav = navigator.language || ''
-  return normalizeLocale(nav)
+  const nav = (navigator.language || '').toLowerCase()
+  // 默认英文：仅浏览器明确的中文变体回退到中文，其余一律英文
+  if (nav.startsWith('zh-tw') || nav.startsWith('zh-hant') || nav === 'zh-hk') return 'zh-TW'
+  if (nav.startsWith('zh')) return 'zh-CN'
+  return 'en'
 }
 
 function normalizeLocale(lang: string): string {
