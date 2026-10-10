@@ -1,4 +1,4 @@
-// C# API Client Generator for openapi-ui
+// C# API Client Generator for apirak
 // Adapted from the original React version
 
 function resolveRef(value, spec, visited = new Set()) {

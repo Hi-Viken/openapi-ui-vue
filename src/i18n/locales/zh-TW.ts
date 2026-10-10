@@ -1,6 +1,6 @@
 export default {
   app: {
-    title: 'OpenAPI UI',
+    title: 'Apirak',
     loadingCollection: '正在載入集合...',
     importCollection: '匯入集合',
     retrySource: '重試設定源',
@@ -16,8 +16,8 @@ export default {
   },
   workspace: {
     toggleCollections: '切換集合面板',
-    logo: 'OpenAPI UI 標誌',
-    openOnGithub: '在 GitHub 上開啟 OpenAPI UI',
+    logo: 'Apirak 標誌',
+    openOnGithub: '在 GitHub 上開啟 Apirak',
     collection: '集合',
     import: '匯入',
     theme: '主題',

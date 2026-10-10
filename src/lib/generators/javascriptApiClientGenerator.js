@@ -1,4 +1,4 @@
-// JavaScript API Client Generator for openapi-ui
+// JavaScript API Client Generator for apirak
 export class JavaScriptApiGenerator {
   constructor(options = {}) {
     this.swagger = null;

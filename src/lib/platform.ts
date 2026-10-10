@@ -154,7 +154,7 @@ export function migrateLegacy(
 }
 
 export function initialTheme(storage: StorageLike): string {
-  const saved = storage.getItem('openapi-ui:theme')
+  const saved = storage.getItem('apirak:theme')
   return [
     'system',
     'light',

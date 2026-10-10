@@ -1,4 +1,4 @@
-# OpenAPI UI（openapi-ui-vue）
+# Apirak
 
 基于 **Vue 3 + Vite + TypeScript** 的 OpenAPI 接口调试工作台：导入 OpenAPI 3.x / Swagger 2.0 规范后，
 即可像 Postman 一样浏览接口、编辑请求、管理集合与变量、批量运行，并一键生成多语言请求代码与
@@ -15,7 +15,7 @@
 `/openapi/v1.json`），源码完全一致。
 
 <p align="center">
-  <img src="public/openapi-ui.png" alt="OpenAPI UI" width="120" />
+  <img src="public/apirak.png" alt="Apirak" width="120" />
 </p>
 
 ---
@@ -99,7 +99,7 @@
 - **接口概览（Overview）**：Markdown 文档渲染（`marked` + `DOMPurify` 消毒，防 XSS）。
 - **多语言（i18n）**：内置 **English / 简体中文 / 繁體中文** 三套文案。
     - **默认语言按浏览器协商**：未手动设置时读取 `navigator.languages` 选择默认语言（中文浏览器→中文、英文浏览器→英文）；浏览器语言不在三套内（如 `fr`/`de`/`ja`）一律回退 **English**。
-    - **手动选择优先且持久化**：在主页或登录页底部切换语言会写入 `localStorage['openapi-ui:locale']` 并立即生效；之后刷新或重访都以该选择为准，不再跟随浏览器。
+    - **手动选择优先且持久化**：在主页或登录页底部切换语言会写入 `localStorage['apirak:locale']` 并立即生效；之后刷新或重访都以该选择为准，不再跟随浏览器。
     - 登录页与主页共用同一 i18n 实例与存储键，两边语言**双向同步**。
 - **主题**：内置多套预设主题——默认 `graphite` 暗色，另含 `github-dark` / `visual-studio-dark` / `dark-plus` / `dark-modern` / `contrast` 等暗色，以及 `github-light` / `visual-studio-light` 浅色，并提供 `system` 跟随系统配色。登录页与主页面共享主题变量，风格自动一致。
 - **工作区持久化**：Tabs、历史、收藏、变量、集合按规范标识（URL 或 `info.title + version`）
@@ -285,7 +285,7 @@ VITE_SPEC_NAME=
 - **没有引入路由**。SPA 内部按访问路径分流：当 `location.pathname`（去掉结尾斜杠）以 `/login` 结尾时渲染登录视图；其余路径（含 `/`）一律渲染接口工作台首页。
     - 开发：`http://127.0.0.1:5173/login`
     - 嵌进 .NET（挂在 `/docs` 下）：`http://<host>/docs/login`
-- 登录页**复用主页的主题与多语言**：样式全部吃 `main.css` 的主题变量，底部语言下拉与主页面共用同一 `i18n` 实例与 `localStorage['openapi-ui:locale']`，两边语言双向同步。
+- 登录页**复用主页的主题与多语言**：样式全部吃 `main.css` 的主题变量，底部语言下拉与主页面共用同一 `i18n` 实例与 `localStorage['apirak:locale']`，两边语言双向同步。
 - 表单行为（与后端对接的约定）：
     - `method="post" action=""`：直接 POST 回**当前路径**（如 `/login`、`/docs/login`），不写死端点。
     - 隐藏字段 `return`：携带登录来源（未登录跳来时由后端塞入的原目标路径），登录成功后回跳。
@@ -402,7 +402,7 @@ npm run build:dotnet     # 1. 出产物
 ```
 dist/
 ├── index.html                 # 入口，资源引用为 ./assets/... 相对路径
-├── openapi-ui.png             # 来自 public/，页面图标
+├── apirak.png             # 来自 public/，页面图标
 ├── swagger.json               # 来自 public/，示例规范，兜底来源（第 4 优先级）
 └── assets/
     ├── index-<hash>.js
@@ -419,7 +419,7 @@ dist/
 ## 项目结构
 
 ```
-openapi-ui-vue/
+apirak/
 ├── public/                  # 静态资源（应用图标、示例 swagger.json）
 ├── src/
 │   ├── components/

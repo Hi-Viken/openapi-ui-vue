@@ -29,7 +29,7 @@ export function workspaceKey(source: string, spec: any): string {
   const identity = source?.startsWith('data:')
     ? `${spec.info?.title || 'API'}:${spec.info?.version || ''}`
     : source || 'default'
-  return `openapi-ui:workspace:${encodeURIComponent(identity)}:${encodeURIComponent(spec.info?.title || 'API')}`
+  return `apirak:workspace:${encodeURIComponent(identity)}:${encodeURIComponent(spec.info?.title || 'API')}`
 }
 
 export function emptyWorkspace(): any {

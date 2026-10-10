@@ -111,7 +111,7 @@ const isLoginRoute = ref(
   location.pathname.replace(/\/+$/, '').toLowerCase().endsWith('/login')
 )
 
-const importKey = `openapi-ui:last-import:${location.pathname}`
+const importKey = `apirak:last-import:${location.pathname}`
 
 function notify(message: string, failure = false) {
   toast.value = { message, failure }
@@ -142,14 +142,14 @@ function handleImport(spec: OpenApiDocument, source: string, text: string) {
 watch(theme, (newTheme) => {
   document.body.dataset.theme = newTheme
   try {
-    props.storage.setItem('openapi-ui:theme', newTheme)
+    props.storage.setItem('apirak:theme', newTheme)
   } catch {}
 })
 
 // 加载到 JSON 后（无论是 fetch 请求还是手动/缓存导入），把 spec 的大标题
 // info.title 拼接到浏览器页面标题（标签页标题）上。title 为空时回落为 base。
 function applyPageTitle(spec?: OpenApiDocument) {
-  const base = 'OpenAPI UI'
+  const base = 'Apirak'
   const title = spec?.info?.title
   document.title = title ? `${base} · ${title}` : base
 }

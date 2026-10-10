@@ -5,13 +5,13 @@
         <Menu :size="19" />
       </IconButton>
       <a class="brand" href="#" @click.prevent="activate('overview')">
-        <img class="brand-logo" :src="uiAssetUrl('openapi-ui.png')" :alt="$t('workspace.logo')" />
+        <img class="brand-logo" :src="uiAssetUrl('apirak.png')" :alt="$t('workspace.logo')" />
         <span>{{ $t('app.title') }}</span>
       </a>
       <span class="app-version" :title="$t('workspace.frontendVersion')">v{{ APP_VERSION }}</span>
       <a
         class="github-link"
-        href="https://github.com/jakubkozera/openapi-ui"
+        href="https://github.com/Hi-Viken/apirak"
         target="_blank"
         rel="noreferrer"
         :aria-label="$t('workspace.openOnGithub')"
@@ -421,9 +421,9 @@ const toolIcons: Record<string, any> = {
   runner: PlayIcon,
 }
 
-const SIDEBAR_WIDTH_KEY = 'openapi-ui:sidebar-width'
-const REQUEST_LAYOUT_KEY = 'openapi-ui:request-layout'
-const REQUEST_SPLIT_KEY = 'openapi-ui:request-split'
+const SIDEBAR_WIDTH_KEY = 'apirak:sidebar-width'
+const REQUEST_LAYOUT_KEY = 'apirak:request-layout'
+const REQUEST_SPLIT_KEY = 'apirak:request-split'
 const DEFAULT_SIDEBAR_WIDTH = 280
 const MIN_SIDEBAR_WIDTH = 180
 const MAX_SIDEBAR_WIDTH = 520
@@ -839,7 +839,7 @@ const { locale, t } = useI18n()
 function onLocaleChange(event: Event) {
   const value = (event.target as HTMLSelectElement).value
   locale.value = value
-  localStorage.setItem('openapi-ui:locale', value)
+  localStorage.setItem('apirak:locale', value)
 }
 
 function onServerChange(value: string) {

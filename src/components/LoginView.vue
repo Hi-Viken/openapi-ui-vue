@@ -3,7 +3,7 @@
     <main class="login-card">
       <div class="brand">
         <span class="brand-logo">⚙</span>
-        <span class="brand-name">OpenAPI UI</span>
+        <span class="brand-name">Apirak</span>
       </div>
 
       <h1>{{ t('login.title') }}</h1>
@@ -39,7 +39,7 @@
         <button type="submit" class="primary">{{ t('login.submit') }}</button>
       </form>
 
-      <!-- 语言选择：与主页面（Workspace 的 .locale-picker）共用同一 i18n 实例与 localStorage('openapi-ui:locale')，切换即双向同步 -->
+      <!-- 语言选择：与主页面（Workspace 的 .locale-picker）共用同一 i18n 实例与 localStorage('apirak:locale')，切换即双向同步 -->
       <div class="login-footer">
         <span class="footer-label">{{ t('code.language') }}</span>
         <select
@@ -71,7 +71,7 @@ const returnUrl = params.get('return') || ''
 function onLocaleChange(event: Event) {
   const value = (event.target as HTMLSelectElement).value
   locale.value = value
-  localStorage.setItem('openapi-ui:locale', value)
+  localStorage.setItem('apirak:locale', value)
 }
 </script>
 

@@ -1,4 +1,4 @@
-const PENDING_KEY = 'openapi-ui:oauth:pending'
+const PENDING_KEY = 'apirak:oauth:pending'
 
 export function defaultClientId(scheme: any): string {
   if (scheme.clientId != null) return scheme.clientId

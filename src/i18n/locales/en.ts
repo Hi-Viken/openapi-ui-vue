@@ -1,6 +1,6 @@
 export default {
   app: {
-    title: 'OpenAPI UI',
+    title: 'Apirak',
     loadingCollection: 'Loading collection...',
     importCollection: 'Import collection',
     retrySource: 'Retry configured source',
@@ -16,8 +16,8 @@ export default {
   },
   workspace: {
     toggleCollections: 'Toggle collections',
-    logo: 'OpenAPI UI logo',
-    openOnGithub: 'Open OpenAPI UI on GitHub',
+    logo: 'Apirak logo',
+    openOnGithub: 'Open Apirak on GitHub',
     collection: 'Collection',
     import: 'Import',
     theme: 'Theme',

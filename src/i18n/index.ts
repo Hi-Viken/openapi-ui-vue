@@ -6,7 +6,7 @@ import zhTW from './locales/zh-TW'
 function detectLocale(): string {
   // 1) 用户曾显式选择的语言一定优先呈现（语言选择器只提供受支持三项，
   //    normalizeLocale 后必为 en/zh-CN/zh-TW 之一，绝不回退浏览器协商）
-  const stored = localStorage.getItem('openapi-ui:locale')
+  const stored = localStorage.getItem('apirak:locale')
   if (stored) return normalizeLocale(stored)
   // 2) 从未设置过时按浏览器语言协商；语言包内不存在的语言回退英文
   return localeFromBrowser()
